@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GlowAI - Color & Style Analyzer</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --accent: #ec4899;
+      --text: #f8fafc;
+      --subtext: #94a3b8;
+    }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; }
+    body { background-color: var(--bg); color: var(--text); padding: 15px; padding-bottom: 50px; }
+    h1, h2, h3 { text-align: center; margin-bottom: 15px; }
+    h1 { color: var(--accent); font-size: 1.8rem; }
+    
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    }
+    
+    /* Upload & Canvas UI */
+    .upload-btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: var(--accent);
+      color: white;
+      text-align: center;
+      border-radius: 12px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-bottom: 12px;
+    }
+    input[type="file"] { display: none; }
+    
+    .canvas-container {
+      position: relative;
+      width: 100%;
+      text-align: center;
+      display: none;
+    }
+    canvas { max-width: 100%; border-radius: 12px; touch-action: none; border: 2px solid var(--accent); }
+    .instruction { font-size: 0.85rem; color: var(--subtext); text-align: center; margin-top: 6px; }
+
+    /* Swatches */
+    .picker-status { display: flex; justify-content: space-around; margin: 15px 0; }
+    .swatch-box { text-align: center; }
+    .swatch { width: 40px; height: 40px; border-radius: 50%; border: 2px solid white; margin: 5px auto; background: #333; }
+
+    /* Results styling */
+    .btn-action {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      background: #3b82f6;
+      color: white;
+      font-weight: bold;
+      font-size: 1rem;
+      margin-top: 10px;
+    }
+    .result-group { margin-bottom: 12px; }
+    .result-title { color: var(--accent); font-weight: bold; font-size: 0.95rem; }
+    .result-text { font-size: 0.9rem; line-height: 1.4; color: #e2e8f0; }
+
+    /* Forms */
+    input[type="text"], textarea, select {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>✨ GlowAI Studio</h1>
+
+  <!-- TAB 1: COLOR & FEATURE SCANNER -->
+  <div class="card">
+    <h2>1. Color & Feature Analyzer</h2>
+    <label class="upload-btn">
+      📷 Upload/Take Well-Lit Photo
+      <input type="file" id="imageInput" accept="image/*">
+    </label>
+
+    <div class="canvas-container" id="canvasContainer">
+      <canvas id="photoCanvas"></canvas>
+      <div class="instruction" id="tapInstruction">Tap a LIGHT skin area first</div>
+    </div>
+
+    <div class="picker-status">
+      <div class="swatch-box">
+        <div>Light Part</div>
+        <div class="swatch" id="lightSwatch"></div>
+        <small id="lightHex">#---</small>
+      </div>
+      <div class="swatch-box">
+        <div>Dark Part</div>
+        <div class="swatch" id="darkSwatch"></div>
+        <small id="darkHex">#---</small>
+      </div>
+    </div>
+
+    <button class="btn-action" id="analyzeBtn" style="display:none;" onclick="runFullAnalysis()">Analyze My Features & Season</button>
+  </div>
+
+  <!-- RESULTS SECTION -->
+  <div class="card" id="resultsCard" style="display:none;">
+    <h2>Your Custom Analysis</h2>
+    <div id="resultsContent"></div>
+  </div>
+
+  <!-- TAB 2: MAKEUP TUTORIAL GENERATOR -->
+  <div class="card">
+    <h2>💄 Custom Makeup Tutorial</h2>
+    <input type="text" id="makeupInspo" placeholder="What makeup do you want to try? (e.g. Latte Makeup)">
+    <textarea id="myMakeupProducts" placeholder="List products you own (e.g. Maybelline concealer, Pink blush)"></textarea>
+    <button class="btn-action" onclick="generateMakeupGuide()">Get Step-by-Step Tutorial</button>
+    <div id="makeupGuide" class="result-text" style="margin-top: 15px;"></div>
+  </div>
+
+  <!-- TAB 3: HAIR STYLE & BRUSH WORKSHOP -->
+  <div class="card">
+    <h2>💇‍♀️ Hair Inspo & Tool Analyzer</h2>
+    <input type="text" id="hairInspo" placeholder="Desired hairstyle (e.g. Slick back bun)">
+    <textarea id="myHairTools" placeholder="Tools you have (e.g. Round brush, claw clip, hair oil)"></textarea>
+    <button class="btn-action" style="background-color: #10b981;" onclick="generateHairGuide()">Get Hair Instructions</button>
+    <div id="hairGuide" class="result-text" style="margin-top: 15px;"></div>
+  </div>
+
+  <script>
+    const imageInput = document.getElementById('imageInput');
+    const canvas = document.getElementById('photoCanvas');
+    const ctx = canvas.getContext('2d');
+    const canvasContainer = document.getElementById('canvasContainer');
+    const tapInstruction = document.getElementById('tapInstruction');
+    
+    let lightHex = null;
+    let darkHex = null;
+    let pickState = 'light'; // 'light', 'dark', 'done'
+
+    imageInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        canvasContainer.style.display = 'block';
+        pickState = 'light';
+        tapInstruction.innerText = "Tap a LIGHT part of your face (e.g. Forehead/Cheek)";
+      };
+      img.src = URL.createObjectURL(file);
+    });
+
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      const hex = "#" + ((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1);
+
+      if (pickState === 'light') {
+        lightHex = hex;
+        document.getElementById('lightSwatch').style.backgroundColor = hex;
+        document.getElementById('lightHex').innerText = hex;
+        pickState = 'dark';
+        tapInstruction.innerText = "Now tap a DARK part of your face (e.g. Under jaw/contour zone)";
+      } else if (pickState === 'dark') {
+        darkHex = hex;
+        document.getElementById('darkSwatch').style.backgroundColor = hex;
+        document.getElementById('darkHex').innerText = hex;
+        pickState = 'done';
+        tapInstruction.innerText = "Colors recorded! Tap analyze below.";
+        document.getElementById('analyzeBtn').style.display = 'block';
+      }
+    });
+
+    function hexToRgb(hex) {
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : null;
+    }
+
+    function runFullAnalysis() {
+      if (!lightHex || !darkHex) return;
+      
+      const rgbL = hexToRgb(lightHex);
+      const rgbD = hexToRgb(darkHex);
+
+      // Contrast Level
+      const lightLum = 0.2126 * rgbL.r + 0.7152 * rgbL.g + 0.0722 * rgbL.b;
+      const darkLum = 0.2126 * rgbD.r + 0.7152 * rgbD.g + 0.0722 * rgbD.b;
+      const contrastDiff = lightLum - darkLum;
+      const isHighContrast = contrastDiff > 45;
+
+      // Undertone Detection
+      const isWarm = (rgbL.r + rgbL.g) / 2 > rgbL.b + 10;
+      let overtone = "Peach";
+      if (rgbL.g > rgbL.r && rgbL.g > rgbL.b) overtone = "Olive";
+      else if (!isWarm) overtone = "Cool Pink/Red";
+
+      // Season Detection
+      let season = "Bright Spring";
+      if (isWarm && isHighContrast) season = "Warm Autumn";
+      else if (!isWarm && isHighContrast) season = "Winter";
+      else if (!isWarm && !isHighContrast) season = "Summer";
+
+      const metal = isWarm ? "Gold Girlie ✨" : "Silver Girlie 💍";
+
+      const html = `
+        <div class="result-group"><div class="result-title">Undertone & Overtone</div>
+        <div class="result-text">${isWarm ? 'Warm' : 'Cool'} Undertone with a ${overtone} hue.</div></div>
+
+        <div class="result-group"><div class="result-title">Contrast Level</div>
+        <div class="result-text">${isHighContrast ? 'High Contrast' : 'Low-to-Medium Contrast'} between skin, hair, and features.</div></div>
+
+        <div class="result-group"><div class="result-title">Color Season</div>
+        <div class="result-text"><strong>${season}</strong></div></div>
+
+        <div class="result-group"><div class="result-title">Jewelry Match</div>
+        <div class="result-text">You are a <strong>${metal}</strong>!</div></div>
+
+        <div class="result-group"><div class="result-title">Colors to Avoid & Why</div>
+        <div class="result-text">${isWarm ? 'Avoid muted muddy grays—they wash out your warm glow.' : 'Avoid bright mustard yellows—they make cool skin appear yellowed.'}</div></div>
+
+        <div class="result-group"><div class="result-title">Makeup & Nails Recommendations</div>
+        <div class="result-text">
+          • <strong>Lip Balm:</strong> ${isWarm ? 'Tinted Coral or Warm Peach' : 'Berry Jam or Cool Mauve'}<br>
+          • <strong>Blush:</strong> ${isWarm ? 'Warm Apricot' : 'Soft Rosy Pink'}<br>
+          • <strong>Nail Polish:</strong> ${isWarm ? 'Creamy Nude or Terracotta' : 'Deep Wine or Pearl White'}<br>
+          • <strong>Hair Dye:</strong> ${isWarm ? 'Warm Chestnut / Honey Blonde' : 'Ash Brown / Espresso'}
+        </div></div>
+
+        <div class="result-group"><div class="result-title">Hair Type & 3 Style Suggestions</div>
+        <div class="result-text">
+          • <strong>Layered Butterfly Cut:</strong> Adds volume around facial bone structure in a single fluid motion.<br>
+          • <strong>Slicked Back High Pony:</strong> Emphasizes high facial contrast and sharp eye structure seamlessly.<br>
+          • <strong>Soft Curtain Bangs:</strong> Frames soft facial bone contours and draws immediate focus to eyes.
+        </div></div>
+      `;
+
+      document.getElementById('resultsContent').innerHTML = html;
+      document.getElementById('resultsCard').style.display = 'block';
+      document.getElementById('resultsCard').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function generateMakeupGuide() {
+      const inspo = document.getElementById('makeupInspo').value || "Soft Glam";
+      const products = document.getElementById('myMakeupProducts').value || "Concealer, Blush";
+
+      document.getElementById('makeupGuide').innerHTML = `
+        <strong>Guide for ${inspo}:</strong><br><br>
+        <strong>Step 1:</strong> Prep skin and blend your base using ${products}.<br>
+        <strong>Step 2:</strong> Apply blush along upper cheekbones to lift your bone structure.<br>
+        <strong>Step 3:</strong> Tap lip balm onto the center of lips for a natural finish.<br><br>
+        🎬 <strong>Video Tutorial:</strong> Search YouTube for <em>"${inspo} tutorial step by step"</em>.
+      `;
+    }
+
+    function generateHairGuide() {
+      const inspo = document.getElementById('hairInspo').value || "Volume Blowout";
+      const tools = document.getElementById('myHairTools').value || "Brush, hair ties";
+
+      document.getElementById('hairGuide').innerHTML = `
+        <strong>Achieving ${inspo}:</strong><br><br>
+        <strong>Step 1:</strong> Section hair using your existing setup (${tools}).<br>
+        <strong>Step 2:</strong> Wrap individual sections outwards to sculpt framing layers.<br><br>
+        🛒 <strong>Shopping Note:</strong> You already have necessary tools! No extra purchases required.
+      `;
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "GlowAI Studio"
+description = "A galaxy-themed personal color and style studio that analyzes sampled photo colors, recommends a seasonal palette, and generates makeup and hair guidance."
+version = "1.0.0"
+id = "artifacts/glowai-studio"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24933
+
+[services.development]
+run = "pnpm --filter @workspace/glowai-studio run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/glowai-studio", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/glowai-studio/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24933"
+BASE_PATH = "/"
