@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -39,6 +39,7 @@ type Analysis = {
   colors: string[];
 };
 type GuideSet = { makeup: string[]; hair: string[]; kit: string[] };
+type StarBurst = { id: number; x: number; y: number };
 
 const INITIAL_GUIDES: GuideSet = {
   makeup: [
@@ -142,6 +143,9 @@ function GlowStudio() {
   const [wish, setWish] = useState('');
   const [products, setProducts] = useState('');
   const [toast, setToast] = useState('');
+  const [revealStep, setRevealStep] = useState(0);
+  const [bursts, setBursts] = useState<StarBurst[]>([]);
+  const burstId = useRef(0);
 
   const drawImage = (url: string) => {
     const canvas = canvasRef.current;
@@ -177,6 +181,18 @@ function GlowStudio() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    const handleDocumentClick = (event: globalThis.MouseEvent) => {
+      const id = burstId.current++;
+      setBursts((current) => [...current.slice(-5), { id, x: event.clientX, y: event.clientY }]);
+      window.setTimeout(() => {
+        setBursts((current) => current.filter((burst) => burst.id !== id));
+      }, 850);
+    };
+    document.addEventListener('click', handleDocumentClick);
+    return () => document.removeEventListener('click', handleDocumentClick);
+  }, []);
+
   const handleFile = (file?: File) => {
     if (!file || !file.type.startsWith('image/')) {
       setToast('Choose a JPG, PNG, or HEIC photo to begin.');
@@ -188,10 +204,11 @@ function GlowStudio() {
     setPoints({ light: null, dark: null });
     setAnalysis(null);
     setGuides(null);
+    setRevealStep(0);
     setToast('Photo loaded. Pick a light area, then a dark area.');
   };
 
-  const handleCanvasClick = (event: MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || !photoUrl) return;
     const rect = canvas.getBoundingClientRect();
@@ -214,8 +231,9 @@ function GlowStudio() {
     setIsAnalyzing(true);
     window.setTimeout(() => {
       setAnalysis(makeAnalysis(points.light as PhotoPoint, points.dark as PhotoPoint));
+      setRevealStep(0);
       setIsAnalyzing(false);
-      setToast('Your personal palette is ready.');
+      setToast('Your read is ready. Reveal it one signal at a time.');
       window.setTimeout(() => document.getElementById('analysis')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
     }, 800);
   };
@@ -228,7 +246,15 @@ function GlowStudio() {
     setAnalysis(null);
     setGuides(null);
     setActiveKind('light');
+    setRevealStep(0);
     setToast('Studio reset. Whenever you are ready.');
+  };
+
+  const revealNext = () => {
+    if (!analysis || revealStep >= 5) return;
+    const nextStep = revealStep + 1;
+    setRevealStep(nextStep);
+    setToast(nextStep === 5 ? 'Your constellation is complete.' : 'Another signal just came into focus.');
   };
 
   const generateGuides = () => {
@@ -263,12 +289,20 @@ function GlowStudio() {
 
   return (
     <main className="studio-shell">
+      <div className="star-field" aria-hidden="true" />
       <div className="ambient-orbit one" aria-hidden="true" />
       <div className="ambient-orbit two" aria-hidden="true" />
+      {bursts.map((burst) => (
+        <span className="star-burst" key={burst.id} style={{ left: burst.x, top: burst.y }} aria-hidden="true">
+          {Array.from({ length: 8 }, (_, index) => (
+            <i key={index} style={{ '--spark-angle': `${index * 45}deg`, '--spark-distance': `${22 + (index % 3) * 10}px` } as CSSProperties} />
+          ))}
+        </span>
+      ))}
       <header className="topbar">
         <a href="#top" className="brandmark" data-testid="link-brand">
           <span className="brand-orb"><Sparkles size={18} strokeWidth={1.7} /></span>
-          <span><span className="brand-name">style</span><span className="brand-tag"> / studio</span></span>
+          <span><span className="brand-name">ASTRA</span><span className="brand-tag"> / studio</span></span>
         </a>
         <nav className="topnav" aria-label="Studio sections">
           <a href="#studio" data-testid="link-studio">Studio</a>
@@ -333,12 +367,12 @@ function GlowStudio() {
             </div>
           </div>
 
-          <aside className="glass-card instructions" aria-label="How to use style">
+          <aside className="glass-card instructions" aria-label="How to use ASTRA">
             <div className="panel-heading"><div><div className="panel-kicker">the ritual</div><h2 className="panel-title">Three tiny clicks.</h2></div><CircleHelp size={18} color="#b59bff" /></div>
             <div className="instruction-list">
               <div className="instruction"><span className="instruction-num">01</span><div><h4>Choose your light</h4><p>Tap a bright, clear area of skin or hair in the photo.</p></div></div>
               <div className="instruction"><span className="instruction-num">02</span><div><h4>Choose your depth</h4><p>Tap a naturally shadowed or deepest area — avoid black clothing.</p></div></div>
-              <div className="instruction"><span className="instruction-num">03</span><div><h4>Meet your palette</h4><p>style reads the relationship between them, not a single pixel.</p></div></div>
+              <div className="instruction"><span className="instruction-num">03</span><div><h4>Meet your palette</h4><p>ASTRA reads the relationship between them, not a single pixel.</p></div></div>
             </div>
             <div className="privacy-note"><LockKeyhole size={14} /><span>Your image never leaves this browser. We do not upload, save, or train on your photo.</span></div>
           </aside>
@@ -346,23 +380,31 @@ function GlowStudio() {
 
         <section className="analysis-section" id="analysis" aria-labelledby="analysis-title">
           <div className="section-header">
-            <div><div className="eyebrow"><span className="eyebrow-line" /> 02 / your read</div><h2 id="analysis-title">A little science.<br /><em>A lot of you.</em></h2></div>
-            <p>Not a box to fit into — a starting point for colors that already feel like home.</p>
+            <div><div className="eyebrow"><span className="eyebrow-line" /> 02 / your read</div><h2 id="analysis-title">A little science.<br /><em>One reveal at a time.</em></h2></div>
+            <p>Not a box to fit into — follow the signals until your color story comes into focus.</p>
           </div>
           <div className="analysis-grid">
             <div className={`season-card ${isAnalyzing ? 'loading-pulse' : ''}`}>
-              {analysis ? <><div className="panel-kicker">your color season</div><h3>{analysis.season}</h3><p>{analysis.seasonDetail}</p></> : <><div className="panel-kicker">your color season</div><h3>Waiting<br />for you.</h3><p>Upload a photo and make two small color discoveries above.</p></>}
+              {analysis && revealStep >= 3 ? <><div className="panel-kicker">signal 03 · your color season</div><h3>{analysis.season}</h3><p>{analysis.seasonDetail}</p></> : <><div className="panel-kicker">{analysis ? 'signal 03 · coming into focus' : 'your color season'}</div><h3>{analysis ? <>Almost<br />there.</> : <>Waiting<br />for you.</>}</h3><p>{analysis ? 'Keep revealing your read to meet the season your colors are pointing toward.' : 'Upload a photo and make two small color discoveries above.'}</p></>}
             </div>
             <div className="result-cards">
-              <ResultCard icon={<SunMedium size={15} />} label="undertone" value={analysis?.undertone ?? '—'} detail={analysis ? 'The quiet temperature beneath your surface color.' : 'Your warm / cool signal will live here.'} testId="result-undertone" />
-              <ResultCard icon={<Moon size={15} />} label="contrast" value={analysis?.contrast ?? '—'} detail={analysis ? 'How much your natural features like definition.' : 'Your light-to-deep relationship will live here.'} testId="result-contrast" />
-              <ResultCard icon={<Gem size={15} />} label="jewelry mood" value={analysis?.jewelry ?? '—'} detail={analysis ? 'Your most natural-looking metal direction.' : 'A little shine direction, coming soon.'} testId="result-jewelry" />
-              <ResultCard icon={<ShieldCheck size={15} />} label="the north star" value={analysis ? 'Start here' : '—'} detail={analysis?.recommendation ?? 'Your most useful styling cue will appear here.'} testId="result-recommendation" />
+              <ResultCard revealed={!!analysis && revealStep >= 1} icon={<SunMedium size={15} />} label="01 · undertone" value={analysis?.undertone ?? '—'} detail={analysis ? 'The quiet temperature beneath your surface color.' : 'Your warm / cool signal will live here.'} testId="result-undertone" />
+              <ResultCard revealed={!!analysis && revealStep >= 2} icon={<Moon size={15} />} label="02 · contrast" value={analysis?.contrast ?? '—'} detail={analysis ? 'How much your natural features like definition.' : 'Your light-to-deep relationship will live here.'} testId="result-contrast" />
+              <ResultCard revealed={!!analysis && revealStep >= 4} icon={<Gem size={15} />} label="04 · jewelry mood" value={analysis?.jewelry ?? '—'} detail={analysis ? 'Your most natural-looking metal direction.' : 'A little shine direction, coming soon.'} testId="result-jewelry" />
+              <ResultCard revealed={!!analysis && revealStep >= 5} icon={<ShieldCheck size={15} />} label="05 · the north star" value={analysis ? 'Start here' : '—'} detail={analysis?.recommendation ?? 'Your most useful styling cue will appear here.'} testId="result-recommendation" />
               <div className="result-card wide" data-testid="result-color-ribbon">
                 <span className="result-label">your constellation colors</span>
-                {analysis ? <div className="color-ribbon">{analysis.colors.map((color) => <i key={color} style={{ background: color }} title={color} />)}</div> : <div className="color-ribbon"><i style={{ background: '#3B2E65' }} /><i style={{ background: '#5C4B83' }} /><i style={{ background: '#8773A8' }} /><i style={{ background: '#B2A1C4' }} /><i style={{ background: '#D4C7D7' }} /></div>}
+                {analysis && revealStep >= 5 ? <div className="color-ribbon">{analysis.colors.map((color) => <i key={color} style={{ background: color }} title={color} />)}</div> : <div className="color-ribbon locked-ribbon"><i style={{ background: '#3B2E65' }} /><i style={{ background: '#5C4B83' }} /><i style={{ background: '#8773A8' }} /><i style={{ background: '#B2A1C4' }} /><i style={{ background: '#D4C7D7' }} /></div>}
               </div>
             </div>
+          </div>
+          <div className="reveal-controls">
+            <div className="reveal-progress" aria-label={`Color read progress: ${revealStep} of 5 signals revealed`}>
+              {Array.from({ length: 5 }, (_, index) => <span className={index < revealStep ? 'is-revealed' : ''} key={index} />)}
+            </div>
+            <button className="button-primary reveal-button" type="button" onClick={revealNext} disabled={!analysis || revealStep >= 5} data-testid="button-reveal-next">
+              <Sparkles size={15} /> {!analysis ? 'Read your photo first' : revealStep >= 5 ? 'Read complete' : revealStep === 0 ? 'Reveal my undertone' : 'Reveal the next signal'}
+            </button>
           </div>
         </section>
 
@@ -385,15 +427,15 @@ function GlowStudio() {
           </div>
         </section>
 
-        <footer className="footer"><span>style studio · a private space for playing with your own color story</span><span>made for the beautifully curious</span></footer>
+        <footer className="footer"><span>ASTRA studio · a private space for playing with your own color story</span><span>made for the beautifully curious</span></footer>
       </div>
       {toast && <div className="toast-message" role="status" data-testid="status-toast"><Check size={15} /> {toast}</div>}
     </main>
   );
 }
 
-function ResultCard({ icon, label, value, detail, testId }: { icon: ReactNode; label: string; value: string; detail: string; testId: string }) {
-  return <div className="result-card" data-testid={testId}><div className="result-icon">{icon}</div><div className="result-label">{label}</div><div className="result-value">{value}</div><p className="result-detail">{detail}</p></div>;
+function ResultCard({ icon, label, value, detail, revealed, testId }: { icon: ReactNode; label: string; value: string; detail: string; revealed: boolean; testId: string }) {
+  return <div className={`result-card ${revealed ? 'is-revealed' : 'is-locked'}`} data-testid={testId}><div className="result-icon">{icon}</div><div className="result-label">{label}</div><div className="result-value">{revealed ? value : '•••'}</div><p className="result-detail">{revealed ? detail : 'A signal is waiting for its moment.'}</p></div>;
 }
 
 function GuideCard({ icon, title, chip, items, full = false, testId }: { icon: ReactNode; title: string; chip: string; items: string[]; full?: boolean; testId: string }) {
