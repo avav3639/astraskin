@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import {
-  ArrowDown,
   Camera,
   Check,
   CircleHelp,
@@ -31,6 +30,8 @@ type SampleKind = 'light' | 'dark';
 type PhotoPoint = { x: number; y: number; hex: string; rgb: [number, number, number] };
 type Analysis = {
   undertone: string;
+  skinTone: string;
+  faceShape: string;
   contrast: string;
   season: string;
   seasonDetail: string;
@@ -40,6 +41,8 @@ type Analysis = {
 };
 type GuideSet = { makeup: string[]; hair: string[]; kit: string[] };
 type StarBurst = { id: number; x: number; y: number };
+
+const REVEAL_LABELS = ['undertone', 'skin tone', 'face shape', 'contrast', 'season', 'jewelry mood', 'north star'];
 
 const INITIAL_GUIDES: GuideSet = {
   makeup: [
@@ -67,6 +70,60 @@ function luminance(rgb: [number, number, number]) {
   return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
 }
 
+function skinToneFromLightness(lightness: number) {
+  if (lightness >= 0.72) return 'Light';
+  if (lightness >= 0.57) return 'Medium light';
+  if (lightness >= 0.42) return 'Brown';
+  if (lightness >= 0.27) return 'Dark brown';
+  return 'Black';
+}
+
+function faceShapeFromPoints(light: PhotoPoint, dark: PhotoPoint) {
+  const centerOffset = Math.abs((light.x + dark.x) / 2 - 450) / 450;
+  const verticalSpread = Math.abs(light.y - dark.y) / 620;
+  if (verticalSpread > 0.48) return 'Oblong';
+  if (centerOffset > 0.34) return 'Heart';
+  if (verticalSpread < 0.18) return 'Round';
+  if (light.x < dark.x) return 'Square';
+  return 'Oval';
+}
+
+function detectAutomaticPoints(
+  context: CanvasRenderingContext2D,
+  region: { x: number; y: number; width: number; height: number },
+) {
+  const regionX = Math.max(0, Math.floor(region.x));
+  const regionY = Math.max(0, Math.floor(region.y));
+  const width = Math.max(1, Math.floor(region.width));
+  const height = Math.max(1, Math.floor(region.height));
+  const pixels = context.getImageData(regionX, regionY, width, height).data;
+  let lightCandidate: { score: number; point: PhotoPoint } | null = null;
+  let darkCandidate: { score: number; point: PhotoPoint } | null = null;
+  const startX = Math.floor(regionX + width * 0.08);
+  const endX = Math.floor(regionX + width * 0.92);
+  const startY = Math.floor(regionY + height * 0.08);
+  const endY = Math.floor(regionY + height * 0.92);
+
+  for (let y = startY; y < endY; y += 8) {
+    for (let x = startX; x < endX; x += 8) {
+      const offset = ((y - regionY) * width + (x - regionX)) * 4;
+      const r = pixels[offset];
+      const g = pixels[offset + 1];
+      const b = pixels[offset + 2];
+      const rgb: [number, number, number] = [r, g, b];
+      const value = luminance(rgb);
+      const point = { x, y, rgb, hex: hexFromRgb(r, g, b) };
+      if (!lightCandidate || value > lightCandidate.score) lightCandidate = { score: value, point };
+      if (!darkCandidate || value < darkCandidate.score) darkCandidate = { score: value, point };
+    }
+  }
+
+  return {
+    light: lightCandidate?.point ?? null,
+    dark: darkCandidate?.point ?? null,
+  };
+}
+
 function makeAnalysis(light: PhotoPoint, dark: PhotoPoint): Analysis {
   const lightness = luminance(light.rgb);
   const darkness = luminance(dark.rgb);
@@ -74,6 +131,8 @@ function makeAnalysis(light: PhotoPoint, dark: PhotoPoint): Analysis {
   const warmSignal = light.rgb[0] + dark.rgb[0] - light.rgb[2] - dark.rgb[2];
   const undertone = warmSignal > 18 ? 'Warm leaning' : warmSignal < -18 ? 'Cool leaning' : 'Balanced neutral';
   const highContrast = contrastScore > 42;
+  const skinTone = skinToneFromLightness(lightness);
+  const faceShape = faceShapeFromPoints(light, dark);
   const season = undertone === 'Warm leaning'
     ? (highContrast ? 'True Autumn' : 'Soft Spring')
     : undertone === 'Cool leaning'
@@ -86,6 +145,8 @@ function makeAnalysis(light: PhotoPoint, dark: PhotoPoint): Analysis {
       : ['#D8B6A4', '#A98AC2', '#7589B5', '#D8C579', '#EFE3DB'];
   return {
     undertone,
+    skinTone,
+    faceShape,
     contrast: highContrast ? `High contrast · ${contrastScore}%` : `Gentle contrast · ${contrastScore}%`,
     season,
     seasonDetail: highContrast
@@ -135,7 +196,6 @@ function GlowStudio() {
   const [photoUrl, setPhotoUrl] = useState('');
   const [photoName, setPhotoName] = useState('');
   const [points, setPoints] = useState<Record<SampleKind, PhotoPoint | null>>({ light: null, dark: null });
-  const [activeKind, setActiveKind] = useState<SampleKind>('light');
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -162,7 +222,12 @@ function GlowStudio() {
       const scale = Math.min(canvas.width / image.width, canvas.height / image.height);
       const width = image.width * scale;
       const height = image.height * scale;
-      context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+      const imageX = (canvas.width - width) / 2;
+      const imageY = (canvas.height - height) / 2;
+      context.drawImage(image, imageX, imageY, width, height);
+      const automaticPoints = detectAutomaticPoints(context, { x: imageX, y: imageY, width, height });
+      setPoints(automaticPoints);
+      setToast('Lightest and darkest spots found automatically.');
     };
     image.src = url;
   };
@@ -205,22 +270,7 @@ function GlowStudio() {
     setAnalysis(null);
     setGuides(null);
     setRevealStep(0);
-    setToast('Photo loaded. Pick a light area, then a dark area.');
-  };
-
-  const handleCanvasClick = (event: ReactMouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas || !photoUrl) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, Math.min(canvas.width - 1, Math.round((event.clientX - rect.left) * canvas.width / rect.width)));
-    const y = Math.max(0, Math.min(canvas.height - 1, Math.round((event.clientY - rect.top) * canvas.height / rect.height)));
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    const [r, g, b] = context.getImageData(x, y, 1, 1).data;
-    const point = { x, y, rgb: [r, g, b] as [number, number, number], hex: hexFromRgb(r, g, b) };
-    setPoints((current) => ({ ...current, [activeKind]: point }));
-    setToast(`${activeKind === 'light' ? 'Light' : 'Dark'} sample saved at ${point.hex}.`);
-    if (activeKind === 'light') setActiveKind('dark');
+    setToast('Photo loaded. Finding the lightest and darkest spots.');
   };
 
   const runAnalysis = () => {
@@ -234,8 +284,8 @@ function GlowStudio() {
       setRevealStep(0);
       setIsAnalyzing(false);
       setToast('Your read is ready. Reveal it one signal at a time.');
-      window.setTimeout(() => document.getElementById('analysis')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
-    }, 800);
+      window.setTimeout(() => document.getElementById('analysis')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+    }, 480);
   };
 
   const resetStudio = () => {
@@ -245,16 +295,15 @@ function GlowStudio() {
     setPoints({ light: null, dark: null });
     setAnalysis(null);
     setGuides(null);
-    setActiveKind('light');
     setRevealStep(0);
     setToast('Studio reset. Whenever you are ready.');
   };
 
   const revealNext = () => {
-    if (!analysis || revealStep >= 5) return;
+    if (!analysis || revealStep >= REVEAL_LABELS.length) return;
     const nextStep = revealStep + 1;
     setRevealStep(nextStep);
-    setToast(nextStep === 5 ? 'Your constellation is complete.' : 'Another signal just came into focus.');
+    setToast(nextStep === REVEAL_LABELS.length ? 'Your constellation is complete.' : `${REVEAL_LABELS[nextStep - 1]} just came into focus.`);
   };
 
   const generateGuides = () => {
@@ -292,6 +341,19 @@ function GlowStudio() {
       <div className="star-field" aria-hidden="true" />
       <div className="ambient-orbit one" aria-hidden="true" />
       <div className="ambient-orbit two" aria-hidden="true" />
+      {isAnalyzing && (
+        <div className="analysis-loading" role="status" aria-live="polite">
+          <div className="analysis-loading-card">
+            <div className="orbit-scene" aria-hidden="true">
+              <div className="orbit-ring"><span className="loader-moon"><Moon size={20} /></span></div>
+              <div className="loader-planet"><span /></div>
+            </div>
+            <div className="panel-kicker">reading your constellation</div>
+            <h2>Finding your signals.</h2>
+            <p>Light, depth, and proportion are settling into place.</p>
+          </div>
+        </div>
+      )}
       {bursts.map((burst) => (
         <span className="star-burst" key={burst.id} style={{ left: burst.x, top: burst.y }} aria-hidden="true">
           {Array.from({ length: 8 }, (_, index) => (
@@ -329,7 +391,7 @@ function GlowStudio() {
               <div className="panel-meta">{photoName ? `${photoName} · on device` : 'No photo loaded'}<br />daylight is your best filter</div>
             </div>
             <div className="photo-stage">
-              <canvas ref={canvasRef} onClick={handleCanvasClick} data-testid="canvas-photo" aria-label="Photo sampling canvas" />
+               <canvas ref={canvasRef} data-testid="canvas-photo" aria-label="Automatically analyzed photo canvas" />
               {!photoUrl && (
                 <div className="upload-empty">
                   <div className="upload-empty-inner">
@@ -343,21 +405,21 @@ function GlowStudio() {
                   </div>
                 </div>
               )}
-              {photoUrl && (
-                <div className="sample-hint"><span>{activeKind === 'light' ? '1' : '2'}</span><strong>{activeKind === 'light' ? 'Click your lightest area' : 'Now click your deepest area'}</strong><ArrowDown size={13} /></div>
-              )}
+               {photoUrl && points.light && points.dark && (
+                 <div className="sample-hint"><Sparkles size={13} /><strong>Lightest + darkest spots found automatically</strong></div>
+               )}
               {photoUrl && points.light && <span className="canvas-pin light" style={pointStyle(points.light)} aria-label="Light sample point" />}
               {photoUrl && points.dark && <span className="canvas-pin dark" style={pointStyle(points.dark)} aria-label="Dark sample point" />}
             </div>
             <div className="sample-strip">
-              <button className="sample-card" type="button" onClick={() => setActiveKind('light')} data-testid="button-select-light-sample">
+              <div className="sample-card" data-testid="sample-light">
                 <span className="swatch" style={{ background: points.light?.hex ?? 'linear-gradient(135deg,#f9e8ba,#a89bba)' }} />
-                <span><span className="sample-label">Light sample</span><span className="sample-hex">{points.light?.hex ?? <span className="sample-empty">click to choose</span>}</span></span>
-              </button>
-              <button className="sample-card" type="button" onClick={() => setActiveKind('dark')} data-testid="button-select-dark-sample">
+                <span><span className="sample-label">Lightest spot</span><span className="sample-hex">{points.light?.hex ?? <span className="sample-empty">finding spot…</span>}</span></span>
+              </div>
+              <div className="sample-card" data-testid="sample-dark">
                 <span className="swatch" style={{ background: points.dark?.hex ?? 'linear-gradient(135deg,#2b2445,#111026)' }} />
-                <span><span className="sample-label">Dark sample</span><span className="sample-hex">{points.dark?.hex ?? <span className="sample-empty">click to choose</span>}</span></span>
-              </button>
+                <span><span className="sample-label">Darkest spot</span><span className="sample-hex">{points.dark?.hex ?? <span className="sample-empty">finding spot…</span>}</span></span>
+              </div>
             </div>
             <input ref={fileRef} className="file-input" type="file" accept="image/*" onChange={(event) => handleFile(event.target.files?.[0])} data-testid="input-upload-photo" />
             <input ref={cameraRef} className="file-input" type="file" accept="image/*" capture="user" onChange={(event) => handleFile(event.target.files?.[0])} data-testid="input-camera-photo" />
@@ -370,9 +432,9 @@ function GlowStudio() {
           <aside className="glass-card instructions" aria-label="How to use ASTRA">
             <div className="panel-heading"><div><div className="panel-kicker">the ritual</div><h2 className="panel-title">Three tiny clicks.</h2></div><CircleHelp size={18} color="#b59bff" /></div>
             <div className="instruction-list">
-              <div className="instruction"><span className="instruction-num">01</span><div><h4>Choose your light</h4><p>Tap a bright, clear area of skin or hair in the photo.</p></div></div>
-              <div className="instruction"><span className="instruction-num">02</span><div><h4>Choose your depth</h4><p>Tap a naturally shadowed or deepest area — avoid black clothing.</p></div></div>
-              <div className="instruction"><span className="instruction-num">03</span><div><h4>Meet your palette</h4><p>ASTRA reads the relationship between them, not a single pixel.</p></div></div>
+              <div className="instruction"><span className="instruction-num">01</span><div><h4>Bring one photo</h4><p>Use a clear, front-facing photo with natural light.</p></div></div>
+              <div className="instruction"><span className="instruction-num">02</span><div><h4>Let ASTRA scan</h4><p>The lightest and darkest points are found automatically.</p></div></div>
+              <div className="instruction"><span className="instruction-num">03</span><div><h4>Meet your read</h4><p>Reveal undertone, skin tone, face shape, and more one signal at a time.</p></div></div>
             </div>
             <div className="privacy-note"><LockKeyhole size={14} /><span>Your image never leaves this browser. We do not upload, save, or train on your photo.</span></div>
           </aside>
@@ -384,26 +446,28 @@ function GlowStudio() {
             <p>Not a box to fit into — follow the signals until your color story comes into focus.</p>
           </div>
           <div className="analysis-grid">
-            <div className={`season-card ${isAnalyzing ? 'loading-pulse' : ''}`}>
-              {analysis && revealStep >= 3 ? <><div className="panel-kicker">signal 03 · your color season</div><h3>{analysis.season}</h3><p>{analysis.seasonDetail}</p></> : <><div className="panel-kicker">{analysis ? 'signal 03 · coming into focus' : 'your color season'}</div><h3>{analysis ? <>Almost<br />there.</> : <>Waiting<br />for you.</>}</h3><p>{analysis ? 'Keep revealing your read to meet the season your colors are pointing toward.' : 'Upload a photo and make two small color discoveries above.'}</p></>}
+             <div className="season-card">
+               {analysis && revealStep >= 5 ? <><div className="panel-kicker">signal 05 · your color season</div><h3>{analysis.season}</h3><p>{analysis.seasonDetail}</p></> : <><div className="panel-kicker">{analysis ? 'signal 05 · coming into focus' : 'your color season'}</div><h3>{analysis ? <>Almost<br />there.</> : <>Waiting<br />for you.</>}</h3><p>{analysis ? 'Keep revealing your read to meet the season your colors are pointing toward.' : 'Upload a photo and let ASTRA find the two anchor points for your read.'}</p></>}
             </div>
             <div className="result-cards">
-              <ResultCard revealed={!!analysis && revealStep >= 1} icon={<SunMedium size={15} />} label="01 · undertone" value={analysis?.undertone ?? '—'} detail={analysis ? 'The quiet temperature beneath your surface color.' : 'Your warm / cool signal will live here.'} testId="result-undertone" />
-              <ResultCard revealed={!!analysis && revealStep >= 2} icon={<Moon size={15} />} label="02 · contrast" value={analysis?.contrast ?? '—'} detail={analysis ? 'How much your natural features like definition.' : 'Your light-to-deep relationship will live here.'} testId="result-contrast" />
-              <ResultCard revealed={!!analysis && revealStep >= 4} icon={<Gem size={15} />} label="04 · jewelry mood" value={analysis?.jewelry ?? '—'} detail={analysis ? 'Your most natural-looking metal direction.' : 'A little shine direction, coming soon.'} testId="result-jewelry" />
-              <ResultCard revealed={!!analysis && revealStep >= 5} icon={<ShieldCheck size={15} />} label="05 · the north star" value={analysis ? 'Start here' : '—'} detail={analysis?.recommendation ?? 'Your most useful styling cue will appear here.'} testId="result-recommendation" />
+               <ResultCard revealed={!!analysis && revealStep >= 1} icon={<SunMedium size={15} />} label="01 · undertone" value={analysis?.undertone ?? '—'} detail={analysis ? 'The quiet temperature beneath your surface color.' : 'Your warm / cool signal will live here.'} testId="result-undertone" />
+               <ResultCard revealed={!!analysis && revealStep >= 2} icon={<Moon size={15} />} label="02 · skin tone" value={analysis?.skinTone ?? '—'} detail={analysis ? 'A five-point range from light through black.' : 'Your tone range will appear here.'} testId="result-skin-tone" />
+               <ResultCard revealed={!!analysis && revealStep >= 3} icon={<Sparkles size={15} />} label="03 · face shape" value={analysis?.faceShape ?? '—'} detail={analysis ? 'A soft proportion cue from your photo.' : 'Your face-shape cue will appear here.'} testId="result-face-shape" />
+               <ResultCard revealed={!!analysis && revealStep >= 4} icon={<Gem size={15} />} label="04 · contrast" value={analysis?.contrast ?? '—'} detail={analysis ? 'How much your natural features like definition.' : 'Your light-to-deep relationship will live here.'} testId="result-contrast" />
+               <ResultCard revealed={!!analysis && revealStep >= 6} icon={<Gem size={15} />} label="06 · jewelry mood" value={analysis?.jewelry ?? '—'} detail={analysis ? 'Your most natural-looking metal direction.' : 'A little shine direction, coming soon.'} testId="result-jewelry" />
+               <ResultCard revealed={!!analysis && revealStep >= 7} icon={<ShieldCheck size={15} />} label="07 · the north star" value={analysis ? 'Start here' : '—'} detail={analysis?.recommendation ?? 'Your most useful styling cue will appear here.'} testId="result-recommendation" />
               <div className="result-card wide" data-testid="result-color-ribbon">
                 <span className="result-label">your constellation colors</span>
-                {analysis && revealStep >= 5 ? <div className="color-ribbon">{analysis.colors.map((color) => <i key={color} style={{ background: color }} title={color} />)}</div> : <div className="color-ribbon locked-ribbon"><i style={{ background: '#3B2E65' }} /><i style={{ background: '#5C4B83' }} /><i style={{ background: '#8773A8' }} /><i style={{ background: '#B2A1C4' }} /><i style={{ background: '#D4C7D7' }} /></div>}
+                 {analysis && revealStep >= 7 ? <div className="color-ribbon">{analysis.colors.map((color) => <i key={color} style={{ background: color }} title={color} />)}</div> : <div className="color-ribbon locked-ribbon"><i style={{ background: '#3B2E65' }} /><i style={{ background: '#5C4B83' }} /><i style={{ background: '#8773A8' }} /><i style={{ background: '#B2A1C4' }} /><i style={{ background: '#D4C7D7' }} /></div>}
               </div>
             </div>
           </div>
           <div className="reveal-controls">
-            <div className="reveal-progress" aria-label={`Color read progress: ${revealStep} of 5 signals revealed`}>
-              {Array.from({ length: 5 }, (_, index) => <span className={index < revealStep ? 'is-revealed' : ''} key={index} />)}
+             <div className="reveal-progress" aria-label={`Color read progress: ${revealStep} of ${REVEAL_LABELS.length} signals revealed`}>
+               {REVEAL_LABELS.map((label, index) => <span className={index < revealStep ? 'is-revealed' : ''} key={label} title={label} />)}
             </div>
-            <button className="button-primary reveal-button" type="button" onClick={revealNext} disabled={!analysis || revealStep >= 5} data-testid="button-reveal-next">
-              <Sparkles size={15} /> {!analysis ? 'Read your photo first' : revealStep >= 5 ? 'Read complete' : revealStep === 0 ? 'Reveal my undertone' : 'Reveal the next signal'}
+             <button className="button-primary reveal-button" type="button" onClick={revealNext} disabled={!analysis || revealStep >= REVEAL_LABELS.length} data-testid="button-reveal-next">
+               <Sparkles size={15} /> {!analysis ? 'Read your photo first' : revealStep >= REVEAL_LABELS.length ? 'Read complete' : `Reveal my ${REVEAL_LABELS[revealStep]}`}
             </button>
           </div>
         </section>
