@@ -723,6 +723,7 @@ button { cursor: pointer; }
 .result-card.is-locked .result-value { color: rgba(255,255,255,.4); letter-spacing: .18em; }
 .result-card.is-revealed { animation: reveal-card .65s cubic-bezier(.2,.8,.2,1) both; }
 .reveal-controls { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; }
+.reveal-controls-top { margin: 1.2rem 0 1.2rem; padding: .75rem; border: 1px solid rgba(246,212,121,.16); border-radius: .9rem; background: rgba(18,13,37,.46); }
 .reveal-progress { display: flex; flex: 1; max-width: 34rem; gap: .42rem; align-items: center; }
 .reveal-progress span { width: auto; min-width: .65rem; height: .25rem; flex: 1; border-radius: 99px; background: rgba(221,205,255,.16); transition: background-color .3s, box-shadow .3s, transform .3s; }
 .reveal-progress span.is-revealed { background: var(--glow-gold); box-shadow: 0 0 12px rgba(246,212,121,.56); transform: scaleY(1.7); }
@@ -730,6 +731,12 @@ button { cursor: pointer; }
 .reveal-button[disabled] { cursor: not-allowed; opacity: .55; }
 .result-value { color: var(--glow-gold); }
 .section-header h2, .panel-title, .upload-empty h3, .instruction h4, .guide-card-title { color: var(--glow-gold); }
+.shade-result-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: .75rem; }
+.shade-result-group { min-width: 0; padding: .8rem; border: 1px solid rgba(246,212,121,.15); border-radius: .7rem; background: rgba(255,255,255,.025); }
+.shade-result-name { display: block; margin-bottom: .3rem; color: var(--glow-gold); font: .62rem var(--app-font-mono); letter-spacing: .1em; text-transform: uppercase; }
+.shade-result-group strong { display: block; min-height: 2.8rem; color: #f6d479; font-size: .88rem; font-weight: 600; line-height: 1.3; }
+.shade-result-swatches { display: flex; gap: .4rem; margin-top: .65rem; }
+.shade-result-swatches i { display: block; width: 2rem; height: 1.25rem; border: 1px solid rgba(255,255,255,.42); border-radius: .32rem; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
 
 .analysis-loading {
   position: fixed;
@@ -890,6 +897,7 @@ button { cursor: pointer; }
   .reveal-controls { align-items: stretch; flex-direction: column; }
   .reveal-button { width: 100%; }
   .reveal-progress { width: 100%; max-width: none; justify-content: center; }
+  .shade-result-columns { grid-template-columns: 1fr; gap: .65rem; }
   .shade-board-layout { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {

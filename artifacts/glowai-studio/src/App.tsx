@@ -108,6 +108,20 @@ function skinTypeFromPoints(light: PhotoPoint, dark: PhotoPoint) {
   return 'Mixed';
 }
 
+function undertoneFromPoints(light: PhotoPoint, dark: PhotoPoint) {
+  const red = (light.rgb[0] + dark.rgb[0]) / 2;
+  const green = (light.rgb[1] + dark.rgb[1]) / 2;
+  const blue = (light.rgb[2] + dark.rgb[2]) / 2;
+  const warmSignal = red - blue;
+  const oliveSignal = green - blue;
+  if (warmSignal > 20 && oliveSignal > 10 && green >= red * 0.9) return 'Olive';
+  if (warmSignal > 34) return 'Peach';
+  if (warmSignal > 14) return 'Golden';
+  if (warmSignal < -26) return 'Blue-pink';
+  if (warmSignal < -10) return 'Rosy';
+  return 'Neutral';
+}
+
 function celebrityMatch(faceShape: string, season: string) {
   const matches: Record<string, { name: string; note: string }> = {
     Oval: { name: 'Zendaya', note: 'clean lines, luminous skin, and one confident color moment' },
@@ -168,13 +182,20 @@ function detectAutomaticPoints(
   const pixels = context.getImageData(regionX, regionY, width, height).data;
   let lightCandidate: { score: number; point: PhotoPoint } | null = null;
   let darkCandidate: { score: number; point: PhotoPoint } | null = null;
-  const startX = Math.floor(regionX + width * 0.08);
-  const endX = Math.floor(regionX + width * 0.92);
-  const startY = Math.floor(regionY + height * 0.08);
-  const endY = Math.floor(regionY + height * 0.92);
+  // Use an inner face oval rather than the complete detector rectangle.
+  // The top and outer edges are intentionally excluded so hair, ears, and
+  // background cannot become the light/dark samples.
+  const startX = Math.floor(regionX + width * 0.16);
+  const endX = Math.floor(regionX + width * 0.84);
+  const startY = Math.floor(regionY + height * 0.18);
+  const endY = Math.floor(regionY + height * 0.86);
 
   for (let y = startY; y < endY; y += 8) {
     for (let x = startX; x < endX; x += 8) {
+      const normalizedX = (x - regionX) / width;
+      const normalizedY = (y - regionY) / height;
+      const faceOval = ((normalizedX - 0.5) / 0.36) ** 2 + ((normalizedY - 0.53) / 0.43) ** 2;
+      if (faceOval > 1) continue;
       const offset = ((y - regionY) * width + (x - regionX)) * 4;
       const r = pixels[offset];
       const g = pixels[offset + 1];
@@ -197,35 +218,36 @@ function makeAnalysis(light: PhotoPoint, dark: PhotoPoint): Analysis {
   const lightness = luminance(light.rgb);
   const darkness = luminance(dark.rgb);
   const contrastScore = Math.round(Math.abs(lightness - darkness) * 100);
-  const warmSignal = light.rgb[0] + dark.rgb[0] - light.rgb[2] - dark.rgb[2];
-  const undertone = warmSignal > 18 ? 'Warm leaning' : warmSignal < -18 ? 'Cool leaning' : 'Balanced neutral';
+  const undertone = undertoneFromPoints(light, dark);
+  const warmUndertone = ['Peach', 'Olive', 'Golden'].includes(undertone);
+  const coolUndertone = ['Blue-pink', 'Rosy'].includes(undertone);
   const highContrast = contrastScore > 42;
   const skinTone = skinToneFromLightness(lightness);
   const skinType = skinTypeFromPoints(light, dark);
   const faceShape = faceShapeFromPoints(light, dark);
-  const season = undertone === 'Warm leaning'
+  const season = warmUndertone
     ? (highContrast ? 'Bright Spring' : 'Neutral Autumn')
-    : undertone === 'Cool leaning'
+    : coolUndertone
       ? (highContrast ? 'Bright Winter' : 'Cool Summer')
       : (highContrast ? 'Deep Winter' : 'Soft Summer');
-  const blush = undertone === 'Warm leaning'
+  const blush = warmUndertone
     ? 'Apricot, peach, and warm terracotta'
-    : undertone === 'Cool leaning'
+    : coolUndertone
       ? 'Rose, raspberry, and cool berry'
       : 'Dusty rose, mauve, and soft coral';
-  const lips = undertone === 'Warm leaning'
+  const lips = warmUndertone
     ? 'Honey nude, cinnamon rose, and brick'
-    : undertone === 'Cool leaning'
+    : coolUndertone
       ? 'Pink nude, cranberry, and plum'
       : 'Rosewood, neutral pink, and soft berry';
-  const blushColors = undertone === 'Warm leaning'
+  const blushColors = warmUndertone
     ? ['#F5B08A', '#D97863', '#B9554D']
-    : undertone === 'Cool leaning'
+    : coolUndertone
       ? ['#E9A1B5', '#C96D91', '#8E466D']
       : ['#DFA19C', '#B97583', '#A76570'];
-  const lipColors = undertone === 'Warm leaning'
+  const lipColors = warmUndertone
     ? ['#C98667', '#A9544D', '#7F3736']
-    : undertone === 'Cool leaning'
+    : coolUndertone
       ? ['#D486A2', '#A4496D', '#632F59']
       : ['#B97877', '#8D4F61', '#713C52'];
   const haircutsByShape: Record<string, string[]> = {
@@ -236,14 +258,14 @@ function makeAnalysis(light: PhotoPoint, dark: PhotoPoint): Analysis {
     Oblong: ['Chin-length bob with full curtain bangs', 'Rounded wolf cut with airy volume', 'Collarbone layers with a soft wave'],
   };
   const haircuts = haircutsByShape[faceShape] ?? haircutsByShape.Oval;
-  const hairColors = undertone === 'Warm leaning'
+  const hairColors = warmUndertone
     ? ['Honey brown', 'Copper gloss', 'Warm espresso']
-    : undertone === 'Cool leaning'
+    : coolUndertone
       ? ['Mushroom brown', 'Blue-black', 'Plum espresso']
       : ['Neutral chocolate', 'Soft black', 'Rose brown'];
-  const colors = undertone === 'Warm leaning'
+  const colors = warmUndertone
     ? ['#F6C36A', '#D98270', '#9E5872', '#293A67', '#F4E4C1']
-    : undertone === 'Cool leaning'
+    : coolUndertone
       ? ['#A7C9F2', '#CE8BB8', '#5A518F', '#304C68', '#E7D8F2']
       : ['#D8B6A4', '#A98AC2', '#7589B5', '#D8C579', '#EFE3DB'];
   const celebrity = celebrityMatch(faceShape, season);
@@ -260,7 +282,7 @@ function makeAnalysis(light: PhotoPoint, dark: PhotoPoint): Analysis {
       ? 'Your features hold their shape next to bright, saturated color.'
       : 'Your features glow beside blended, softly layered color.',
     contrast: highContrast ? `High contrast · ${contrastScore}%` : `Gentle contrast · ${contrastScore}%`,
-    jewelry: undertone === 'Warm leaning' ? 'Brushed gold & champagne' : undertone === 'Cool leaning' ? 'Silver & white gold' : 'Mixed metals, softly layered',
+    jewelry: warmUndertone ? 'Gold' : coolUndertone ? 'Silver' : 'Mixed metals',
     faceShape,
     haircuts,
     hairColors,
@@ -600,6 +622,14 @@ function GlowStudio() {
             <div><div className="eyebrow"><span className="eyebrow-line" /> 02 / your read</div><h2 id="analysis-title">A little science.<br /><em>One reveal at a time.</em></h2></div>
             <p>Not a box to fit into — follow the signals until your color story comes into focus.</p>
           </div>
+           <div className="reveal-controls reveal-controls-top">
+             <div className="reveal-progress" aria-label={`Color read progress: ${revealStep} of ${REVEAL_LABELS.length} signals revealed`}>
+               {REVEAL_LABELS.map((label, index) => <span className={index < revealStep ? 'is-revealed' : ''} key={label} title={label} />)}
+             </div>
+             <button className="button-primary reveal-button" type="button" onClick={revealNext} disabled={!analysis || revealStep >= REVEAL_LABELS.length} data-testid="button-reveal-next">
+               <Sparkles size={15} /> {!analysis ? 'Read your photo first' : revealStep >= REVEAL_LABELS.length ? 'Read complete' : `Reveal my ${REVEAL_LABELS[revealStep]}`}
+             </button>
+           </div>
           <div className="analysis-grid">
              <div className="season-card">
                {analysis && revealStep >= 5 ? <><div className="panel-kicker">signal 05 · your color season</div><h3>{analysis.season}</h3><p>{analysis.seasonDetail}</p></> : <><div className="panel-kicker">{analysis ? 'signal 05 · coming into focus' : 'your color season'}</div><h3>{analysis ? <>Almost<br />there.</> : <>Waiting<br />for you.</>}</h3><p>{analysis ? 'Keep revealing your read to meet the season your colors are pointing toward.' : 'Upload a photo and let ASTRA find the face-only anchor points for your read.'}</p></>}
@@ -607,10 +637,10 @@ function GlowStudio() {
             <div className="result-cards">
                 <ResultCard revealed={!!analysis && revealStep >= 1} icon={<SunMedium size={15} />} label="01 · skin tone" value={analysis?.skinTone ?? '—'} detail={analysis ? 'Light · medium light · brown · dark brown · black.' : 'Your five-point skin-tone range will live here.'} testId="result-skin-tone" />
                 <ResultCard revealed={!!analysis && revealStep >= 2} icon={<Moon size={15} />} label="02 · skin type" value={analysis?.skinType ?? '—'} detail={analysis ? 'A visual finish cue: dry, oily, or mixed.' : 'Your skin-type cue will appear here.'} testId="result-skin-type" />
-                <ResultCard revealed={!!analysis && revealStep >= 3} icon={<Sparkles size={15} />} label="03 · undertone" value={analysis?.undertone ?? '—'} detail={analysis ? 'The quiet temperature beneath your surface color.' : 'Your warm / cool signal will live here.'} testId="result-undertone" />
-                <ResultCard revealed={!!analysis && revealStep >= 4} icon={<Gem size={15} />} label="04 · blush & lips" value={analysis?.blush ?? '—'} detail={analysis ? `Lips: ${analysis.lips}` : 'Your best blush and lip families will appear here.'} testId="result-blush-lips" />
+                 <ResultCard revealed={!!analysis && revealStep >= 3} icon={<Sparkles size={15} />} label="03 · undertone" value={analysis?.undertone ?? '—'} detail={analysis ? 'A specific peach, olive, golden, rosy, or blue-pink temperature cue.' : 'Your specific undertone will live here.'} testId="result-undertone" />
+                 <ShadeResultCard analysis={analysis} revealed={!!analysis && revealStep >= 4} />
                 <ResultCard revealed={!!analysis && revealStep >= 6} icon={<ShieldCheck size={15} />} label="06 · contrast levels" value={analysis?.contrast ?? '—'} detail={analysis ? 'How much your natural features like definition.' : 'Your light-to-deep relationship will live here.'} testId="result-contrast" />
-                <ResultCard revealed={!!analysis && revealStep >= 7} icon={<Gem size={15} />} label="07 · metals" value={analysis?.jewelry ?? '—'} detail={analysis ? 'Your most natural-looking metal direction.' : 'Your shine direction will appear here.'} testId="result-jewelry" />
+                 <ResultCard revealed={!!analysis && revealStep >= 7} icon={<Gem size={15} />} label="07 · metals" value={analysis?.jewelry ?? '—'} detail={analysis ? 'Gold, silver, or mixed metals — your clearest shine direction.' : 'Your gold, silver, or mixed-metal direction will appear here.'} testId="result-jewelry" />
                 <ResultCard revealed={!!analysis && revealStep >= 8} icon={<Sparkles size={15} />} label="08 · face shape" value={analysis?.faceShape ?? '—'} detail={analysis ? 'A soft proportion cue from your face-only scan.' : 'Your face-shape cue will appear here.'} testId="result-face-shape" />
                 <ResultCard revealed={!!analysis && revealStep >= 9} icon={<Scissors size={15} />} label="09 · best haircuts" value={analysis ? 'Three tailored cuts' : '—'} detail={analysis ? analysis.haircuts.join(' · ') : 'Your three best haircut directions will appear here.'} testId="result-haircuts" />
                 <ResultCard revealed={!!analysis && revealStep >= 10} icon={<WandSparkles size={15} />} label="10 · best hair colours" value={analysis ? analysis.hairColors.join(' · ') : '—'} detail={analysis ? 'Colour directions that stay in harmony with your palette.' : 'Your best hair-colour directions will appear here.'} testId="result-hair-colors" />
@@ -621,14 +651,6 @@ function GlowStudio() {
                   {analysis && revealStep >= 11 ? <div className="color-ribbon">{analysis.colors.map((color) => <i key={color} style={{ background: color }} title={color} />)}</div> : <div className="color-ribbon locked-ribbon"><i style={{ background: '#3B2E65' }} /><i style={{ background: '#5C4B83' }} /><i style={{ background: '#8773A8' }} /><i style={{ background: '#B2A1C4' }} /><i style={{ background: '#D4C7D7' }} /></div>}
               </div>
             </div>
-          </div>
-          <div className="reveal-controls">
-             <div className="reveal-progress" aria-label={`Color read progress: ${revealStep} of ${REVEAL_LABELS.length} signals revealed`}>
-               {REVEAL_LABELS.map((label, index) => <span className={index < revealStep ? 'is-revealed' : ''} key={label} title={label} />)}
-            </div>
-             <button className="button-primary reveal-button" type="button" onClick={revealNext} disabled={!analysis || revealStep >= REVEAL_LABELS.length} data-testid="button-reveal-next">
-               <Sparkles size={15} /> {!analysis ? 'Read your photo first' : revealStep >= REVEAL_LABELS.length ? 'Read complete' : `Reveal my ${REVEAL_LABELS[revealStep]}`}
-            </button>
           </div>
         </section>
 
@@ -644,9 +666,9 @@ function GlowStudio() {
               <div className="form-field"><label className="form-label" htmlFor="wish">The feeling / occasion</label><textarea id="wish" value={wish} onChange={(event) => setWish(event.target.value)} placeholder="e.g. soft-focus dinner look, bright office makeup, wedding guest glow…" data-testid="textarea-beauty-wish" /><div className="field-help">Specific is fun. “A little mysterious” counts.</div></div>
                <div className="form-field"><label className="form-label" htmlFor="products">Products & tools already in your orbit</label><input id="products" value={products} onChange={(event) => setProducts(event.target.value)} placeholder="e.g. cream blush, flat iron, brown liner" data-testid="input-products-tools" /><div className="field-help">Separate with commas — we will work with what you have.</div></div>
                <div className="form-field">
-                 <span className="form-label">Photos from your makeup routine</span>
+                  <span className="form-label">Inspo photos</span>
                  <input ref={routinePhotoRef} className="file-input" type="file" accept="image/*" multiple onChange={(event) => handleRoutineFiles(event.target.files)} data-testid="input-routine-photos" />
-                 <button className="button-secondary routine-upload" type="button" onClick={() => routinePhotoRef.current?.click()}><Upload size={15} /> Add routine photos</button>
+                  <button className="button-secondary routine-upload" type="button" onClick={() => routinePhotoRef.current?.click()}><Upload size={15} /> Inspo upload</button>
                  <div className="field-help">Optional — add your current makeup looks so the guide can work from your real routine.</div>
                  {routinePhotos.length > 0 && <div className="routine-photo-grid">{routinePhotos.map((photo) => <div className="routine-photo" key={photo.url}><img src={photo.url} alt={photo.name} /><button type="button" onClick={() => removeRoutinePhoto(photo.url)} aria-label={`Remove ${photo.name}`}>×</button></div>)}</div>}
                </div>
@@ -687,6 +709,32 @@ function ShadeBoard({ analysis, revealed }: { analysis: Analysis | null; reveale
       ) : (
         <div className="shade-board-locked">Reveal signal 04 to generate your blush + lip image.</div>
       )}
+    </div>
+  );
+}
+
+function ShadeResultCard({ analysis, revealed }: { analysis: Analysis | null; revealed: boolean }) {
+  return (
+    <div className={`result-card wide shade-result ${revealed ? 'is-revealed' : 'is-locked'}`} data-testid="result-blush-lips">
+      <div className="result-icon"><Gem size={15} /></div>
+      <div className="result-label">04 · blush & lips</div>
+      {revealed && analysis ? (
+        <div className="shade-result-columns">
+          <div className="shade-result-group">
+            <span className="shade-result-name">Blush</span>
+            <strong>{analysis.blush}</strong>
+            <div className="shade-result-swatches">{analysis.blushColors.map((color) => <i key={color} style={{ background: color }} title={color} />)}</div>
+          </div>
+          <div className="shade-result-group">
+            <span className="shade-result-name">Lips</span>
+            <strong>{analysis.lips}</strong>
+            <div className="shade-result-swatches">{analysis.lipColors.map((color) => <i key={color} style={{ background: color }} title={color} />)}</div>
+          </div>
+        </div>
+      ) : (
+        <div className="result-value">•••</div>
+      )}
+      {!revealed && <p className="result-detail">A signal is waiting for its moment.</p>}
     </div>
   );
 }
